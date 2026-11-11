@@ -469,6 +469,15 @@ def main(argv=None):
         sys.stderr.write("%s is not valid JSON: %s\n" % (args.input, error))
         return 1
 
+    # A JSON array or bare string parses cleanly but has no log object to walk,
+    # so say what is wrong instead of failing later with an attribute error.
+    if not isinstance(har, dict):
+        sys.stderr.write(
+            "%s: top level is %s, a HAR file must be a JSON object\n"
+            % (args.input, type(har).__name__)
+        )
+        return 1
+
     if args.command == "summary":
         data = summarize(har)
         if args.json:
@@ -491,8 +500,14 @@ def main(argv=None):
     counter = redact_har(har, options)
     payload = json.dumps(har, ensure_ascii=False)
     if args.output:
-        with open(args.output, "w", encoding="utf-8") as handle:
-            handle.write(payload)
+        # A read-only directory or a bad path used to surface as a traceback
+        # after the work was done, which reads as a crash rather than a refusal.
+        try:
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+        except OSError as error:
+            sys.stderr.write("cannot write %s: %s\n" % (args.output, error))
+            return 1
         sys.stderr.write("%s: %s\n" % (args.output, format_counter(counter)))
     else:
         sys.stdout.write(payload)

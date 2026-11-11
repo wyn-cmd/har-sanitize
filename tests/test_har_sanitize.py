@@ -1,7 +1,10 @@
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -154,6 +157,38 @@ class RedactionTests(unittest.TestCase):
         # Summary output ends up in tickets, so it must not echo a live token.
         data = har_sanitize.summarize(build_har())
         self.assertNotIn("abc123secret", json.dumps(data))
+
+
+class CommandLineTests(unittest.TestCase):
+    def run_cli(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = har_sanitize.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def write_capture(self, directory, document):
+        path = os.path.join(directory, "capture.har")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(document, handle)
+        return path
+
+    def test_redact_refuses_a_json_array(self):
+        # Valid JSON that is not a HAR document should be named as such, not
+        # crash on the missing get method further down the pipeline.
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_capture(directory, [{"log": {"entries": []}}])
+            code, _, err = self.run_cli(["redact", path])
+        self.assertEqual(code, 1)
+        self.assertIn("top level is list", err)
+
+    def test_redact_reports_an_unwritable_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_capture(directory, build_har())
+            missing = os.path.join(directory, "no-such-dir", "clean.har")
+            code, _, err = self.run_cli(["redact", path, "-o", missing])
+        self.assertEqual(code, 1)
+        self.assertIn("cannot write", err)
+        self.assertNotIn("Traceback", err)
 
 
 if __name__ == "__main__":
